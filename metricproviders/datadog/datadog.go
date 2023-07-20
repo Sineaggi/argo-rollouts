@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/DataDog/datadog-api-client-go/v2/api/datadog"
+	"github.com/DataDog/datadog-api-client-go/v2/api/datadogV1"
 	"github.com/argoproj/argo-rollouts/pkg/apis/rollouts/v1alpha1"
 	"github.com/argoproj/argo-rollouts/utils/defaults"
 	"github.com/argoproj/argo-rollouts/utils/evaluate"
@@ -153,13 +155,44 @@ func (p *Provider) Run(run *v1alpha1.AnalysisRun, metric v1alpha1.Metric) v1alph
 	request.Header.Set("DD-API-KEY", p.config.ApiKey)
 	request.Header.Set("DD-APPLICATION-KEY", p.config.AppKey)
 
+	ctx := context.WithValue(
+		context.Background(),
+		datadog.ContextAPIKeys,
+		map[string]datadog.APIKey{
+			"apiKeyAuth": {
+				Key: p.config.ApiKey,
+			},
+			"appKeyAuth": {
+				Key: p.config.AppKey,
+			},
+		},
+	)
+
 	// Send Request
 	httpClient := &http.Client{
 		Timeout: time.Duration(10) * time.Second,
 	}
-	response, err := httpClient.Do(request)
+	configuration := datadog.NewConfiguration()
+	configuration.HTTPClient = httpClient
+	configuration.AddDefaultHeader("Content-Type", "application/json")
+	if p.config.Address != "" {
+		configuration.Scheme = url.Scheme
+		configuration.Host = url.Host
+	}
 
-	if err != nil {
+	apiClient := datadog.NewAPIClient(configuration)
+
+	var response *http.Response
+	if apiVersion == "v2" {
+		response, err = httpClient.Do(request)
+	} else {
+		v1MetricsApi := datadogV1.NewMetricsApi(apiClient)
+		from := now - interval
+		to := now
+		_, response, err = v1MetricsApi.QueryMetrics(ctx, from, to, metric.Provider.Datadog.Query)
+	}
+
+	if err != nil && (response == nil || response.StatusCode >= 500) {
 		return metricutil.MarkMeasurementError(measurement, err)
 	}
 

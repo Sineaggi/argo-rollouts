@@ -3,6 +3,7 @@ module github.com/argoproj/argo-rollouts
 go 1.19
 
 require (
+	github.com/DataDog/datadog-api-client-go/v2 v2.14.0
 	github.com/antonmedv/expr v1.12.6
 	github.com/argoproj/notifications-engine v0.4.0
 	github.com/argoproj/pkg v0.13.6
@@ -76,6 +77,7 @@ require (
 
 require (
 	github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 // indirect
+	github.com/DataDog/zstd v1.5.2 // indirect
 	github.com/MakeNowJust/heredoc v1.0.0 // indirect
 	github.com/Masterminds/goutils v1.1.1 // indirect
 	github.com/Masterminds/semver v1.5.0 // indirect
