@@ -182,18 +182,30 @@ func (p *Provider) Run(run *v1alpha1.AnalysisRun, metric v1alpha1.Metric) v1alph
 
 	apiClient := datadog.NewAPIClient(configuration)
 
+	var value string
 	var response *http.Response
-	if apiVersion == "v2" {
-		response, err = httpClient.Do(request)
-	} else {
+	if apiVersion == "v1" {
 		v1MetricsApi := datadogV1.NewMetricsApi(apiClient)
 		from := now - interval
 		to := now
-		_, response, err = v1MetricsApi.QueryMetrics(ctx, from, to, metric.Provider.Datadog.Query)
-	}
-
-	if err != nil && (response == nil || response.StatusCode >= 500) {
-		return metricutil.MarkMeasurementError(measurement, err)
+		var queryResponse datadogV1.MetricsQueryResponse
+		queryResponse, response, err = v1MetricsApi.QueryMetrics(ctx, from, to, metric.Provider.Datadog.Query)
+		if err != nil {
+			return metricutil.MarkMeasurementError(measurement, err)
+		}
+		_, _, err = p.parseResponseV1_2(metric, queryResponse)
+		//println("", queryResponse.Error)
+		//_, _, err = p.parseResponseV1(metric, response)
+		if err != nil {
+			return metricutil.MarkMeasurementError(measurement, err)
+		}
+	} else if apiVersion == "v2" {
+		response, err = httpClient.Do(request)
+		if err != nil {
+			return metricutil.MarkMeasurementError(measurement, err)
+		}
+	} else {
+		return metricutil.MarkMeasurementError(measurement, fmt.Errorf("Invalid API version: %s", apiVersion))
 	}
 
 	value, status, err := p.parseResponse(metric, response, apiVersion)
@@ -293,6 +305,58 @@ func (p *Provider) parseResponseV1(metric v1alpha1.Metric, response *http.Respon
 	value := datapoint[1]
 	status, err := evaluate.EvaluateResult(value, metric, p.logCtx)
 	return strconv.FormatFloat(value, 'f', -1, 64), status, err
+}
+
+func (p *Provider) parseResponseV1_2(metric v1alpha1.Metric, res datadogV1.MetricsQueryResponse) (string, v1alpha1.AnalysisPhase, error) {
+
+	if res.UnparsedObject != nil {
+		// todo: one last check
+		raw, _ := json.Marshal(res.UnparsedObject)
+		var resV1 datadogV1.MetricsQueryResponse
+		err := json.Unmarshal(raw, &resV1)
+		if err != nil {
+			return "", v1alpha1.AnalysisPhaseError, fmt.Errorf("Could not parse JSON body: %v", err)
+		} else {
+			println("onoz")
+		}
+
+	}
+
+	// Handle an empty query result
+	if len(res.Series) == 0 || len(res.Series[0].Pointlist) == 0 {
+		var nilFloat64 *float64
+		status, err := evaluate.EvaluateResult(nilFloat64, metric, p.logCtx)
+		if err != nil {
+			//println("omogod")
+		}
+
+		//blex, err := datadogV1.MetricsQueryResponse.MarshalJSON(series)
+		//MarshalJSON()
+		//res.Series.MarshalJSON
+		seriesBytes, jsonErr := json.Marshal(res.UnparsedObject["series"])
+		if jsonErr != nil {
+			return "", v1alpha1.AnalysisPhaseError, fmt.Errorf("Failed to marshall JSON empty series: %v", jsonErr)
+		}
+
+		return string(seriesBytes), status, err
+	}
+
+	// Handle a populated query result
+	series := res.Series[0]
+	datapoint := series.Pointlist[len(series.Pointlist)-1]
+	if len(datapoint) != 2 {
+		return "", v1alpha1.AnalysisPhaseError, fmt.Errorf("Datapoint does not have 2 values")
+	}
+
+	value := datapoint[1]
+	if value == nil {
+		return "", v1alpha1.AnalysisPhaseError, fmt.Errorf("Datapoint is nil")
+	}
+	status, err := evaluate.EvaluateResult(value, metric, p.logCtx)
+	if err != nil {
+		println("fek")
+	}
+	return strconv.FormatFloat(*value, 'f', -1, 64), status, err
 }
 
 func (p *Provider) parseResponseV2(metric v1alpha1.Metric, response *http.Response) (string, v1alpha1.AnalysisPhase, error) {
